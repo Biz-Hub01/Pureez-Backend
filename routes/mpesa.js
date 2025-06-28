@@ -1,0 +1,116 @@
+const express = require('express');
+const axios = require('axios');
+const router = express.Router();
+
+// M-Pesa credentials
+const {
+  MPESA_CONSUMER_KEY,
+  MPESA_CONSUMER_SECRET,
+  MPESA_BUSINESS_SHORTCODE,
+  MPESA_PASSKEY,
+  MPESA_CALLBACK_URL
+} = process.env;
+
+// Generate M-Pesa access token
+const getAccessToken = async () => {
+  try {
+    const auth = Buffer.from(`${MPESA_CONSUMER_KEY}:${MPESA_CONSUMER_SECRET}`).toString('base64');
+    
+    if (!MPESA_CONSUMER_KEY || !MPESA_CONSUMER_SECRET) {
+       throw new Error("M-Pesa credentials are not configured");
+    }
+    const response = await axios.get(
+      'https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials',
+      { headers: { Authorization: `Basic ${auth}` } }
+    );
+    
+    console.log("Generated M-Pesa token:", response.data.access_token);
+    return response.data.access_token;
+  } catch (error) {
+    console.error("M-Pesa token error:", error.response?.data || error.message);
+    throw new Error("Failed to generate M-Pesa token");
+  }
+};
+
+// Initiate M-Pesa payment
+router.post('/payment', async (req, res) => {
+  try {
+    const { phone, amount } = req.body;
+    const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
+    const password = Buffer.from(`${MPESA_BUSINESS_SHORTCODE}${MPESA_PASSKEY}${timestamp}`).toString('base64');
+    
+    // Sanitize phone number
+    let formattedPhone = phone.replace(/\D/g, '');
+    if (formattedPhone.startsWith('0')) {
+      formattedPhone = '254' + formattedPhone.substring(1);
+    } else if (formattedPhone.startsWith('7')) {
+      formattedPhone = '254' + formattedPhone;
+    }
+    
+    // Get access token using the new function
+    const accessToken = await getAccessToken();
+    
+    // Initiate STK push
+    const stkResponse = await axios.post(
+      'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
+      {
+        BusinessShortCode: MPESA_BUSINESS_SHORTCODE,
+        Password: password,
+        Timestamp: timestamp,
+        TransactionType: "CustomerPayBillOnline",
+        Amount: amount,
+        PartyA: formattedPhone,
+        PartyB: MPESA_BUSINESS_SHORTCODE,
+        PhoneNumber: formattedPhone,
+        CallBackURL: MPESA_CALLBACK_URL,
+        AccountReference: "Declutter Purchase",
+        TransactionDesc: "Payment for items"
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    res.json(stkResponse.data);
+  } catch (error) {
+    console.error("M-Pesa payment error:", error.response?.data || error.message);
+    res.status(500).json({ error: "Failed to initiate M-Pesa payment" });
+  }
+});
+
+// M-Pesa callback handler
+router.post('/callback', (req, res) => {
+  console.log("M-Pesa Callback Received:", req.body);
+  
+  // Here you would:
+  // 1. Verify the payment status
+  // 2. Update your database
+  // 3. Send notifications to user/admin
+  // 4. Trigger any post-payment actions
+  
+  try {
+    const { Body: { stkCallback: { ResultCode, CallbackMetadata } } } = req.body;
+    
+    if (ResultCode === 0) {
+      const metadata = CallbackMetadata.Item.reduce((acc, item) => {
+        acc[item.Name] = item.Value;
+        return acc;
+      }, {});
+      
+      console.log("Payment successful:", metadata);
+      // Update database here
+    } else {
+      console.error("Payment failed:", req.body);
+    }
+    
+    res.status(200).send();
+  } catch (error) {
+    console.error("Callback error:", error);
+    res.status(500).send();
+  }
+});
+
+module.exports = router;
