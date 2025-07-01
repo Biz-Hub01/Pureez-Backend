@@ -20,7 +20,7 @@ const getAccessToken = async () => {
        throw new Error("M-Pesa credentials are not configured");
     }
     const response = await axios.get(
-      'https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials',
+      'https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials',
       { headers: { Authorization: `Basic ${auth}` } }
     );
     
@@ -52,7 +52,7 @@ router.post('/payment', async (req, res) => {
     
     // Initiate STK push
     const stkResponse = await axios.post(
-      'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
+      'https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
       {
         BusinessShortCode: MPESA_BUSINESS_SHORTCODE,
         Password: password,
@@ -110,6 +110,41 @@ router.post('/callback', (req, res) => {
   } catch (error) {
     console.error("Callback error:", error);
     res.status(500).send();
+  }
+});
+
+// Add transaction status endpoint
+router.post('/transaction-status', async (req, res) => {
+  try {
+    const { transactionID } = req.body;
+    const accessToken = await getAccessToken();
+    
+    const response = await axios.post(
+      'https://sandbox.safaricom.co.ke/mpesa/transactionstatus/v1/query',
+      {
+        Initiator: process.env.MPESA_INITIATOR,
+        SecurityCredential: process.env.MPESA_SECURITY_CREDENTIAL,
+        CommandID: 'TransactionStatusQuery',
+        TransactionID: transactionID,
+        PartyA: process.env.MPESA_BUSINESS_SHORTCODE,
+        IdentifierType: '4',
+        ResultURL: `${process.env.MPESA_CALLBACK_URL}/transaction-status`,
+        QueueTimeOutURL: `${process.env.MPESA_CALLBACK_URL}/timeout`,
+        Remarks: 'Transaction status check',
+        Occasion: 'Check status'
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    res.json(response.data);
+  } catch (error) {
+    console.error("Transaction status error:", error.response?.data || error.message);
+    res.status(500).json({ error: "Failed to check transaction status" });
   }
 });
 
