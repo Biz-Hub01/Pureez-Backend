@@ -1,8 +1,8 @@
 const express = require('express');
 const axios = require('axios');
 const router = express.Router();
-// Database to store payment requests (in production, use a real database)
-const paymentRequests = new Map();
+const { createClient } = require('@supabase/supabase-js');
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
 // M-Pesa credentials
 const {
@@ -76,13 +76,23 @@ router.post('/payment', async (req, res) => {
       }
     );
     
-    // Store payment request with initial status
+     // After getting stkResponse
     const checkoutRequestId = stkResponse.data.CheckoutRequestID;
-    paymentRequests.set(checkoutRequestId, {
-      status: 'pending',
-      data: stkResponse.data,
-      createdAt: new Date()
-    });
+
+    // Store payment request in database
+    const { error } = await supabase
+      .from('mpesa_payments')
+      .insert([{
+        checkout_request_id: checkoutRequestId,
+        phone: formattedPhone,
+        amount: amount,
+        status: 'pending'
+      }]);
+    
+    if (error) {
+      console.error('Supabase insert error:', error);
+      throw new Error('Failed to store payment record');
+    }
 
     res.json(stkResponse.data);
   } catch (error) {
@@ -92,39 +102,25 @@ router.post('/payment', async (req, res) => {
 });
 
 // M-Pesa callback handler
-router.post('/callback', (req, res) => {
+router.post('/callback', async (req, res) => {
   console.log("M-Pesa Callback Received:", req.body);
-  
-  // Here you would:
-  // 1. Verify the payment status
-  // 2. Update your database
-  // 3. Send notifications to user/admin
-  // 4. Trigger any post-payment actions
   
   try {
     const callback = req.body;
-    if (callback.Body && callback.Body.stkCallback) {
-      const { CheckoutRequestID, ResultCode, CallbackMetadata } = callback.Body.stkCallback;
+
+     if (callback.Body?.stkCallback) {
+      const { CheckoutRequestID, ResultCode } = callback.Body.stkCallback;
+      const status = ResultCode == 0 ? 'success' : 'failed';
       
-      if (ResultCode === 0) {
-        const metadata = {};
-        if (CallbackMetadata && CallbackMetadata.Item) {
-          CallbackMetadata.Item.forEach(item => {
-            metadata[item.Name] = item.Value;
-          });
-        }
-        
-        paymentRequests.set(CheckoutRequestID, {
-          status: 'success',
-          data: metadata,
-          updatedAt: new Date()
-        });
-      } else {
-        paymentRequests.set(CheckoutRequestID, {
-          status: 'failed',
-          data: callback,
-          updatedAt: new Date()
-        });
+      // Update status in mpesa_payments table
+      const { error } = await supabase
+        .from('mpesa_payments')
+        .update({ status })
+        .eq('checkout_request_id', CheckoutRequestID);
+      
+      if (error) {
+        console.error('Supabase update error:', error);
+        throw error;
       }
     }
     
@@ -135,54 +131,31 @@ router.post('/callback', (req, res) => {
   }
 });
 
-// Check payment status
-router.get('/payment-status/:checkoutRequestId', (req, res) => {
-  const { checkoutRequestId } = req.params;
-  const paymentRequest = paymentRequests.get(checkoutRequestId);
-  
-  if (!paymentRequest) {
-    return res.status(404).json({ error: 'Payment request not found' });
-  }
-  
-  res.json({
-    status: paymentRequest.status,
-    data: paymentRequest.data
-  });
-});
+// Check Payment Status (query table)
+router.get('/payment-status/:checkoutRequestId', async (req, res) => {
+  try {
+    const { checkoutRequestId } = req.params;
+    
+    // Query mpesa_payments table
+    const { data, error } = await supabase
+      .from('mpesa_payments')
+      .select('status')
+      .eq('checkout_request_id', checkoutRequestId)
+      .single();
 
-// // Add transaction status endpoint
-// router.post('/transaction-status', async (req, res) => {
-//   try {
-//     const { transactionID } = req.body;
-//     const accessToken = await getAccessToken();
+    if (error) throw error;
     
-//     const response = await axios.post(
-//       'https://sandbox.safaricom.co.ke/mpesa/transactionstatus/v1/query',
-//       {
-//         Initiator: process.env.MPESA_INITIATOR,
-//         SecurityCredential: process.env.MPESA_SECURITY_CREDENTIAL,
-//         CommandID: 'TransactionStatusQuery',
-//         TransactionID: transactionID,
-//         PartyA: process.env.MPESA_BUSINESS_SHORTCODE,
-//         IdentifierType: '4',
-//         ResultURL: `${process.env.MPESA_CALLBACK_URL}/transaction-status`,
-//         QueueTimeOutURL: `${process.env.MPESA_CALLBACK_URL}/timeout`,
-//         Remarks: 'Transaction status check',
-//         Occasion: 'Check status'
-//       },
-//       {
-//         headers: {
-//           Authorization: `Bearer ${accessToken}`,
-//           'Content-Type': 'application/json'
-//         }
-//       }
-//     );
+    if (!data) {
+      return res.status(404).json({ error: 'Payment request not found' });
+    }
     
-//     res.json(response.data);
-//   } catch (error) {
-//     console.error("Transaction status error:", error.response?.data || error.message);
-//     res.status(500).json({ error: "Failed to check transaction status" });
-//   }
-// });
+    res.json({
+      status: data.status,
+    });
+  } catch (error) {
+    console.error("Database error:", error);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
 
 module.exports = router;
