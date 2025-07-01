@@ -1,8 +1,6 @@
 const express = require('express');
 const axios = require('axios');
 const router = express.Router();
-const { v4: uuidv4 } = require('uuid');
-
 // Database to store payment requests (in production, use a real database)
 const paymentRequests = new Map();
 
