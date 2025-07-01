@@ -4,6 +4,12 @@ const router = express.Router();
 const { createClient } = require('@supabase/supabase-js');
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
+// Validate environment variables
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY) {
+  console.error('Supabase environment variables missing!');
+  // Instead of crashing, we'll log an error but let the server start
+}
+
 // M-Pesa credentials
 const {
   MPESA_CONSUMER_KEY,
