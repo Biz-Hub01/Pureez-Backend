@@ -1,6 +1,10 @@
 const express = require('express');
 const axios = require('axios');
 const router = express.Router();
+const { v4: uuidv4 } = require('uuid');
+
+// Database to store payment requests (in production, use a real database)
+const paymentRequests = new Map();
 
 // M-Pesa credentials
 const {
@@ -74,6 +78,14 @@ router.post('/payment', async (req, res) => {
       }
     );
     
+    // Store payment request with initial status
+    const checkoutRequestId = stkResponse.data.CheckoutRequestID;
+    paymentRequests.set(checkoutRequestId, {
+      status: 'pending',
+      data: stkResponse.data,
+      createdAt: new Date()
+    });
+
     res.json(stkResponse.data);
   } catch (error) {
     console.error("M-Pesa payment error:", error.response?.data || error.message);
@@ -92,18 +104,30 @@ router.post('/callback', (req, res) => {
   // 4. Trigger any post-payment actions
   
   try {
-    const { Body: { stkCallback: { ResultCode, CallbackMetadata } } } = req.body;
-    
-    if (ResultCode === 0) {
-      const metadata = CallbackMetadata.Item.reduce((acc, item) => {
-        acc[item.Name] = item.Value;
-        return acc;
-      }, {});
+    const callback = req.body;
+    if (callback.Body && callback.Body.stkCallback) {
+      const { CheckoutRequestID, ResultCode, CallbackMetadata } = callback.Body.stkCallback;
       
-      console.log("Payment successful:", metadata);
-      // Update database here
-    } else {
-      console.error("Payment failed:", req.body);
+      if (ResultCode === 0) {
+        const metadata = {};
+        if (CallbackMetadata && CallbackMetadata.Item) {
+          CallbackMetadata.Item.forEach(item => {
+            metadata[item.Name] = item.Value;
+          });
+        }
+        
+        paymentRequests.set(CheckoutRequestID, {
+          status: 'success',
+          data: metadata,
+          updatedAt: new Date()
+        });
+      } else {
+        paymentRequests.set(CheckoutRequestID, {
+          status: 'failed',
+          data: callback,
+          updatedAt: new Date()
+        });
+      }
     }
     
     res.status(200).send();
@@ -113,39 +137,54 @@ router.post('/callback', (req, res) => {
   }
 });
 
-// Add transaction status endpoint
-router.post('/transaction-status', async (req, res) => {
-  try {
-    const { transactionID } = req.body;
-    const accessToken = await getAccessToken();
-    
-    const response = await axios.post(
-      'https://sandbox.safaricom.co.ke/mpesa/transactionstatus/v1/query',
-      {
-        Initiator: process.env.MPESA_INITIATOR,
-        SecurityCredential: process.env.MPESA_SECURITY_CREDENTIAL,
-        CommandID: 'TransactionStatusQuery',
-        TransactionID: transactionID,
-        PartyA: process.env.MPESA_BUSINESS_SHORTCODE,
-        IdentifierType: '4',
-        ResultURL: `${process.env.MPESA_CALLBACK_URL}/transaction-status`,
-        QueueTimeOutURL: `${process.env.MPESA_CALLBACK_URL}/timeout`,
-        Remarks: 'Transaction status check',
-        Occasion: 'Check status'
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-    
-    res.json(response.data);
-  } catch (error) {
-    console.error("Transaction status error:", error.response?.data || error.message);
-    res.status(500).json({ error: "Failed to check transaction status" });
+// Check payment status
+router.get('/payment-status/:checkoutRequestId', (req, res) => {
+  const { checkoutRequestId } = req.params;
+  const paymentRequest = paymentRequests.get(checkoutRequestId);
+  
+  if (!paymentRequest) {
+    return res.status(404).json({ error: 'Payment request not found' });
   }
+  
+  res.json({
+    status: paymentRequest.status,
+    data: paymentRequest.data
+  });
 });
+
+// // Add transaction status endpoint
+// router.post('/transaction-status', async (req, res) => {
+//   try {
+//     const { transactionID } = req.body;
+//     const accessToken = await getAccessToken();
+    
+//     const response = await axios.post(
+//       'https://sandbox.safaricom.co.ke/mpesa/transactionstatus/v1/query',
+//       {
+//         Initiator: process.env.MPESA_INITIATOR,
+//         SecurityCredential: process.env.MPESA_SECURITY_CREDENTIAL,
+//         CommandID: 'TransactionStatusQuery',
+//         TransactionID: transactionID,
+//         PartyA: process.env.MPESA_BUSINESS_SHORTCODE,
+//         IdentifierType: '4',
+//         ResultURL: `${process.env.MPESA_CALLBACK_URL}/transaction-status`,
+//         QueueTimeOutURL: `${process.env.MPESA_CALLBACK_URL}/timeout`,
+//         Remarks: 'Transaction status check',
+//         Occasion: 'Check status'
+//       },
+//       {
+//         headers: {
+//           Authorization: `Bearer ${accessToken}`,
+//           'Content-Type': 'application/json'
+//         }
+//       }
+//     );
+    
+//     res.json(response.data);
+//   } catch (error) {
+//     console.error("Transaction status error:", error.response?.data || error.message);
+//     res.status(500).json({ error: "Failed to check transaction status" });
+//   }
+// });
 
 module.exports = router;
