@@ -20,7 +20,7 @@ const getAccessToken = async () => {
        throw new Error("M-Pesa credentials are not configured");
     }
     const response = await axios.get(
-      'https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials',
+      'https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials',
       { headers: { Authorization: `Basic ${auth}` } }
     );
     
@@ -52,7 +52,7 @@ router.post('/payment', async (req, res) => {
     
     // Initiate STK push
     const stkResponse = await axios.post(
-      'https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
+      'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
       {
         BusinessShortCode: MPESA_BUSINESS_SHORTCODE,
         Password: password,
