@@ -252,10 +252,10 @@ router.get("/payment-status/:checkoutRequestId", async (req, res) => {
   status = "failed";
 }
 
-    // Update mpesa_payments table with status
+    // Fetch mpesa_payments table with status
     await supabase
       .from("mpesa_payments")
-      .update({ status })
+      .select({ status })
       .eq("checkout_request_id", checkoutRequestId);
 
     res.json({ status });
