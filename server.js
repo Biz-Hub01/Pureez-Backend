@@ -8,8 +8,18 @@ const mpesaRoutes = require('./routes/mpesa');
 const app = express();
 const PORT = process.env.PORT || 8081;
 
+// Enhanced CORS middleware
+app.use(cors({
+  origin: [
+    'http://localhost:8080',
+    'https://your-production-domain.com'
+  ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+}));
+
 // Middleware
-app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
