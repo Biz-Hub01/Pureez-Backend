@@ -11,8 +11,7 @@ const PORT = process.env.PORT || 8081;
 // Enhanced CORS middleware
 app.use(cors({
   origin: [
-    'http://localhost:8080',
-    'https://your-production-domain.com'
+    'https://pureez-frontend.vercel.app'
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
