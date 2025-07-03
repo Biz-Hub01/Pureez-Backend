@@ -36,7 +36,7 @@ const getAccessToken = async () => {
 
     const response = await axios.get(
       "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
-      { headers: { Authorization: `Basic ${auth}` }, timeout: 30000 }
+      { headers: { Authorization: `Basic ${auth}` }, timeout: 90000 }
     );
 
     console.log("Generated M-Pesa token:", response.data.access_token);
@@ -100,7 +100,6 @@ router.post("/payment", async (req, res) => {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         },
-        timeout: 30000,
       }
     );
 
@@ -238,7 +237,6 @@ router.get("/payment-status/:checkoutRequestId", async (req, res) => {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         },
-        timeout: 10000,
       }
     );
 
@@ -246,9 +244,13 @@ router.get("/payment-status/:checkoutRequestId", async (req, res) => {
     let status = "pending";
     if (response.data.ResultCode === 0) {
       status = "success";
-    } else if (response.data.ResultCode && response.data.ResultCode !== 0) {
-      status = "failed";
-    }
+    } else if ([
+  "1032", // Request cancelled
+  "1037", // Timeout
+  "2001"  // Already paid
+].includes(response.data.ResultCode.toString())) {
+  status = "failed";
+}
 
     // Update mpesa_payments table with status
     await supabase
