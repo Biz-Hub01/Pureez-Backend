@@ -72,11 +72,19 @@ router.post("/payment", async (req, res) => {
     ).toString("base64");
 
     // Sanitize phone number
-    let formattedPhone = phone.replace(/\D/g, "");
-    if (formattedPhone.startsWith("0")) {
+    let formattedPhone = String(phone).replace(/\D/g, "");
+    if (formattedPhone.startsWith("0") && formattedPhone.length === 10) {
       formattedPhone = "254" + formattedPhone.substring(1);
-    } else if (formattedPhone.startsWith("7")) {
+    } else if (formattedPhone.startsWith("7") && formattedPhone.length === 9) {
       formattedPhone = "254" + formattedPhone;
+    }
+
+    // Validate phone format
+    if (!/^254[17]\d{8}$/.test(formattedPhone)) {
+      return res.status(400).json({
+        error: "Invalid phone number",
+        details: "Please provide a valid Kenyan phone number"
+      });
     }
 
     // Initiate STK push
@@ -174,22 +182,21 @@ router.post("/callback", async (req, res) => {
       let mpesaReceiptNumber = "";
       let transactionDate = "";
 
-      if (CallbackMetadata && CallbackMetadata.Item) {
-        for (const item of CallbackMetadata.Item) {
+      if (CallbackMetadata?.Item) {
+        // Handle both array and object formats
+        const items = Array.isArray(CallbackMetadata.Item) 
+          ? CallbackMetadata.Item 
+          : [CallbackMetadata.Item];
+          
+        for (const item of items) {
           if (item.Name === "MpesaReceiptNumber") {
-            mpesaReceiptNumber = item.Value;
+            mpesaReceiptNumber = item.Value || "";
           }
           if (item.Name === "TransactionDate") {
-            transactionDate = item.Value;
+            transactionDate = item.Value || "";
           }
         }
       }
-
-      // Debugging: Log the entire callback metadata
-      console.log(
-        "Callback Metadata:",
-        JSON.stringify(CallbackMetadata, null, 2)
-      );
 
       // Update payment status in mpesa_payments table
       await supabase
@@ -215,68 +222,31 @@ router.post("/callback", async (req, res) => {
 router.get("/payment-status/:checkoutRequestId", async (req, res) => {
   try {
     const { checkoutRequestId } = req.params;
-    const accessToken = await getAccessToken();
-    const timestamp = getTimestamp();
 
-    // Generate password
-    const password = Buffer.from(
-      `${MPESA_BUSINESS_SHORTCODE}${MPESA_PASSKEY}${timestamp}`
-    ).toString("base64");
-
-    // Query payment status
-    const response = await axios.post(
-      "https://sandbox.safaricom.co.ke/mpesa/stkpushquery/v1/query",
-      {
-        BusinessShortCode: MPESA_BUSINESS_SHORTCODE,
-        Password: password,
-        Timestamp: timestamp,
-        CheckoutRequestID: checkoutRequestId,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    // Determine status from response
-    let status = "pending";
-    if (response.data.ResultCode === 0) {
-      status = "success";
-    } else if ([
-  "1032", // Request cancelled
-  "1037", // Timeout
-  "2001"  // Already paid
-].includes(response.data.ResultCode.toString())) {
-  status = "failed";
-}
-
-    // Fetch mpesa_payments table with status
-    await supabase
-      .from("mpesa_payments")
-      .select({ status })
-      .eq("checkout_request_id", checkoutRequestId);
-
-    res.json({ status });
-  } catch (error) {
-    console.error(
-      "Payment status error:",
-      error.response?.data || error.message
-    );
-
-    let errorDetails = "Internal server error";
-    if (error.response) {
-      errorDetails =
-        error.response.data.errorMessage ||
-        error.response.data ||
-        `HTTP ${error.response.status}`;
+    // Validate input
+    if (!checkoutRequestId) {
+      return res.status(400).json({
+        error: "Invalid request",
+        details: "Missing checkout request ID"
+      });
     }
 
-    res.status(500).json({
-      error: "Failed to check payment status",
-      details: errorDetails,
-    });
+    // Fetch mpesa_payments table with status
+    const { data, error } = await supabase
+      .from("mpesa_payments")
+      .select("status")
+      .eq("checkout_request_id", checkoutRequestId)
+      .single();
+
+    if (error) throw error;
+    
+    // Return status from database
+    return res.json({ status: data?.status || "pending" });
+
+  } catch (error) {
+    console.error("Payment status error:", error );
+    // Return pending status on any error
+    return res.json({ status: "pending" });
   }
 });
 
